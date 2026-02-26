@@ -2,7 +2,7 @@ import React from 'react';
 import { Terminal } from './components/Terminal';
 import { CodeBlock } from './components/CodeBlock';
 import { POWERSHELL_SCRIPT, BATCH_SCRIPT } from './script';
-import { Terminal as TerminalIcon, Download, Code2, Zap, Shield, HardDrive } from 'lucide-react';
+import { Terminal as TerminalIcon, Download, Code2, Zap, Shield, HardDrive, Github } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function App() {
@@ -54,7 +54,16 @@ export default function App() {
                 <Download className="mr-2 h-4 w-4" />
                 Get the Scripts
               </a>
-              <a href="#features" className="text-sm font-semibold leading-6 text-zinc-300 hover:text-white transition-colors">
+              <a
+                href="https://github.com/daniele-sforza/winjdk-manager"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full bg-zinc-800 px-6 py-3 text-sm font-semibold text-zinc-100 shadow-sm hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 transition-all flex items-center"
+              >
+                <Github className="mr-2 h-4 w-4" />
+                GitHub
+              </a>
+              <a href="#features" className="text-sm font-semibold leading-6 text-zinc-300 hover:text-white transition-colors ml-4">
                 View Features <span aria-hidden="true">→</span>
               </a>
             </motion.div>
@@ -203,9 +212,20 @@ export default function App() {
             <TerminalIcon className="h-6 w-6 text-emerald-400" />
             <span className="text-zinc-50 font-semibold">WinJDK Manager</span>
           </div>
-          <p className="mt-4 md:mt-0 text-sm text-zinc-400">
-            Built for Windows PowerShell. No dependencies required.
-          </p>
+          <div className="mt-4 md:mt-0 flex items-center space-x-6">
+            <p className="text-sm text-zinc-400">
+              Built for Windows PowerShell. No dependencies required.
+            </p>
+            <a
+              href="https://github.com/danielesforza/winjdk-manager"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 hover:text-white transition-colors"
+            >
+              <span className="sr-only">GitHub</span>
+              <Github className="h-5 w-5" />
+            </a>
+          </div>
         </div>
       </footer>
     </div>
