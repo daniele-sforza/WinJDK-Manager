@@ -1,0 +1,49 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/script.ts'
+      - '.github/workflows/release.yml'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate script files
+        run: npx tsx scripts/build-release.ts
+
+      - name: Create ZIP archive
+        run: |
+          cd release
+          zip -r winjdk-manager.zip jdk.ps1 jdk.bat
+
+      - name: Generate Tag Name
+        id: generate_tag
+        run: echo "tag=v$(date +'%Y.%m.%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.generate_tag.outputs.tag }}
+          name: Release ${{ steps.generate_tag.outputs.tag }}
+          files: release/winjdk-manager.zip
+          body: "Automated release containing the latest WinJDK Manager scripts (`jdk.ps1` and `jdk.bat`)."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
