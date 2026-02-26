@@ -1,0 +1,5 @@
+{
+  "name": "WinJDK Manager",
+  "description": "A PowerShell CLI tool to download, list, switch, link, and delete JDK versions on Windows.",
+  "requestFramePermissions": []
+}
