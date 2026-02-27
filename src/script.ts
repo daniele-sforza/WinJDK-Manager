@@ -88,6 +88,25 @@ function Set-JavaHome {
     }
 }
 
+function Verify-Checksum {
+    param([string]$FilePath, [string]$ExpectedHash, [string]$Algorithm = "SHA256")
+    if (-not $ExpectedHash) {
+        Write-Color "Warning: No checksum provided for verification." Yellow
+        return $true
+    }
+    Write-Color "Verifying $Algorithm checksum..." Cyan
+    $ActualHash = (Get-FileHash -Path $FilePath -Algorithm $Algorithm).Hash
+    if ($ActualHash -eq $ExpectedHash) {
+        Write-Color "Checksum verified successfully." Green
+        return $true
+    } else {
+        Write-Color "Error: Checksum mismatch!" Red
+        Write-Color "Expected: $ExpectedHash" Red
+        Write-Color "Actual:   $ActualHash" Red
+        return $false
+    }
+}
+
 function Install-Temurin {
     param([string]$Ver)
     $ApiUrl = "https://api.adoptium.net/v3/assets/feature_releases/$Ver/ga?architecture=x64&heap_size=normal&image_type=jdk&jvm_impl=hotspot&os=windows"
@@ -98,12 +117,18 @@ function Install-Temurin {
         
         if ($Asset) {
             $DownloadUrl = $Asset.package.link
+            $ExpectedChecksum = $Asset.package.checksum
             $FileName = $Asset.package.name
             $ZipPath = Join-Path $JdkDir $FileName
             $ExtractDir = Join-Path $JdkDir "temurin-$Ver"
             
             Write-Color "Downloading Temurin $Ver from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
+            
+            if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
+                Remove-Item $ZipPath -Force
+                exit 1
+            }
             
             Write-Color "Extracting archive..." Cyan
             if (Test-Path $ExtractDir) { Remove-Item -Path $ExtractDir -Recurse -Force }
@@ -123,13 +148,29 @@ function Install-Corretto {
     param([string]$Ver)
     # Amazon Corretto URL pattern
     $DownloadUrl = "https://corretto.aws/downloads/latest/amazon-corretto-$Ver-x64-windows-jdk.zip"
+    $ChecksumUrl = "https://corretto.aws/downloads/latest_checksum/amazon-corretto-$Ver-x64-windows-jdk.zip"
     $ZipPath = Join-Path $JdkDir "corretto-$Ver.zip"
     $ExtractDir = Join-Path $JdkDir "corretto-$Ver"
     
     try {
+        $ExpectedChecksum = ""
+        try {
+            $ExpectedChecksum = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop).Trim()
+        } catch {
+            Write-Color "Warning: Could not fetch checksum for Corretto $Ver." Yellow
+        }
+
         Write-Color "Downloading Corretto $Ver from $DownloadUrl..." Cyan
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
         
+        if ($ExpectedChecksum) {
+            $Algorithm = if ($ExpectedChecksum.Length -eq 32) { "MD5" } else { "SHA256" }
+            if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm $Algorithm)) {
+                Remove-Item $ZipPath -Force
+                exit 1
+            }
+        }
+
         Write-Color "Extracting archive..." Cyan
         if (Test-Path $ExtractDir) { Remove-Item -Path $ExtractDir -Recurse -Force }
         Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
@@ -151,12 +192,18 @@ function Install-Zulu {
         $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
         if ($Response.Count -gt 0) {
             $DownloadUrl = $Response[0].download_url
+            $ExpectedChecksum = $Response[0].sha256_hash
             $ZipPath = Join-Path $JdkDir "zulu-$Ver.zip"
             $ExtractDir = Join-Path $JdkDir "zulu-$Ver"
             
             Write-Color "Downloading Zulu $Ver from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
             
+            if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
+                Remove-Item $ZipPath -Force
+                exit 1
+            }
+
             Write-Color "Extracting archive..." Cyan
             if (Test-Path $ExtractDir) { Remove-Item -Path $ExtractDir -Recurse -Force }
             Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
@@ -175,13 +222,29 @@ function Install-Microsoft {
     param([string]$Ver)
     # Microsoft Build of OpenJDK
     $ApiUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-x64.zip"
+    $ChecksumUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-x64.zip.sha256sum.txt"
     $ZipPath = Join-Path $JdkDir "microsoft-$Ver.zip"
     $ExtractDir = Join-Path $JdkDir "microsoft-$Ver"
     
     try {
+        $ExpectedChecksum = ""
+        try {
+            $ChecksumText = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop)
+            $ExpectedChecksum = $ChecksumText.Split(' ')[0].Trim()
+        } catch {
+            Write-Color "Warning: Could not fetch checksum for Microsoft JDK $Ver." Yellow
+        }
+
         Write-Color "Downloading Microsoft JDK $Ver from $ApiUrl..." Cyan
         Invoke-WebRequest -Uri $ApiUrl -OutFile $ZipPath
         
+        if ($ExpectedChecksum) {
+            if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
+                Remove-Item $ZipPath -Force
+                exit 1
+            }
+        }
+
         Write-Color "Extracting archive..." Cyan
         if (Test-Path $ExtractDir) { Remove-Item -Path $ExtractDir -Recurse -Force }
         Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
@@ -203,12 +266,31 @@ function Install-OpenJDK {
         $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
         if ($Response.result.Count -gt 0) {
             $DownloadUrl = $Response.result[0].links.pkg_download_redirect
+            $InfoUrl = $Response.result[0].links.pkg_info_uri
             $ZipPath = Join-Path $JdkDir "openjdk-$Ver.zip"
             $ExtractDir = Join-Path $JdkDir "openjdk-$Ver"
             
+            $ExpectedChecksum = ""
+            try {
+                $InfoResponse = Invoke-RestMethod -Uri $InfoUrl -ErrorAction Stop
+                $ChecksumUrl = $InfoResponse.result[0].checksum_uri
+                if ($ChecksumUrl) {
+                    $ExpectedChecksum = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop).Trim()
+                }
+            } catch {
+                Write-Color "Warning: Could not fetch checksum for OpenJDK $Ver." Yellow
+            }
+
             Write-Color "Downloading OpenJDK $Ver from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
             
+            if ($ExpectedChecksum) {
+                if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
+                    Remove-Item $ZipPath -Force
+                    exit 1
+                }
+            }
+
             Write-Color "Extracting archive..." Cyan
             if (Test-Path $ExtractDir) { Remove-Item -Path $ExtractDir -Recurse -Force }
             Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
