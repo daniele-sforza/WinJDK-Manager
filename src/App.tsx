@@ -45,7 +45,7 @@ export default function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
-              className="mt-10 flex items-center justify-center gap-x-6"
+              className="mt-10 flex flex-wrap items-center justify-center gap-4 sm:gap-6"
             >
               <a
                 href="#download"
@@ -55,16 +55,19 @@ export default function App() {
                 Get the Scripts
               </a>
               <a
+                href="#features"
+                className="rounded-full bg-zinc-800 px-6 py-3 text-sm font-semibold text-zinc-100 shadow-sm hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 transition-all flex items-center"
+              >
+                View Features <span aria-hidden="true" className="ml-2">→</span>
+              </a>
+              <a
                 href="https://github.com/daniele-sforza/winjdk-manager"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-full bg-zinc-800 px-6 py-3 text-sm font-semibold text-zinc-100 shadow-sm hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 transition-all flex items-center"
+                className="text-sm font-semibold leading-6 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center"
               >
                 <Github className="mr-2 h-4 w-4" />
                 GitHub
-              </a>
-              <a href="#features" className="text-sm font-semibold leading-6 text-zinc-300 hover:text-white transition-colors ml-4">
-                View Features <span aria-hidden="true">→</span>
               </a>
             </motion.div>
           </div>
