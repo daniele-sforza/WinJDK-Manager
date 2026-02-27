@@ -220,7 +220,7 @@ export default function App() {
               Built for Windows PowerShell. No dependencies required.
             </p>
             <a
-              href="https://github.com/danielesforza/winjdk-manager"
+              href="https://github.com/daniele-sforza/winjdk-manager"
               target="_blank"
               rel="noopener noreferrer"
               className="text-zinc-400 hover:text-white transition-colors"
