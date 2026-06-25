@@ -1,11 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Terminal } from './components/Terminal';
 import { CodeBlock } from './components/CodeBlock';
 import { POWERSHELL_SCRIPT, BATCH_SCRIPT } from './script';
-import { Terminal as TerminalIcon, Download, Code2, Zap, Shield, HardDrive, Github } from 'lucide-react';
+import { Terminal as TerminalIcon, Download, Code2, Zap, Shield, HardDrive, Github, Cpu, Copy, Check } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function App() {
+  const [selectedVersion, setSelectedVersion] = useState('21');
+  const [selectedProvider, setSelectedProvider] = useState('temurin');
+  const [selectedArch, setSelectedArch] = useState('auto'); // 'auto', 'x64', 'arm64'
+  const [commandCopied, setCommandCopied] = useState(false);
+
+  const handleCopyCommand = () => {
+    navigator.clipboard.writeText(getGeneratedCommand());
+    setCommandCopied(true);
+    setTimeout(() => setCommandCopied(false), 2000);
+  };
+
+  const getGeneratedCommand = () => {
+    const archPart = selectedArch === 'auto' ? '' : ` ${selectedArch}`;
+    const providerPart = selectedProvider === 'temurin' && selectedArch === 'auto' ? '' : ` ${selectedProvider}`;
+    return `jdk install ${selectedVersion}${providerPart}${archPart}`;
+  };
+
+  const getProviderLabel = (prov: string) => {
+    switch (prov) {
+      case 'temurin': return 'Eclipse Temurin';
+      case 'corretto': return 'Amazon Corretto';
+      case 'zulu': return 'Azul Zulu';
+      case 'microsoft': return 'Microsoft OpenJDK';
+      case 'openjdk': return 'Official OpenJDK';
+      default: return prov;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans selection:bg-emerald-200">
       {/* Hero Section */}
@@ -132,6 +160,143 @@ export default function App() {
                 </div>
               ))}
             </dl>
+          </div>
+        </div>
+      </section>
+
+      {/* Interactive Command Builder Section */}
+      <section id="builder" className="py-20 bg-zinc-100 border-t border-b border-zinc-200">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="mx-auto max-w-2xl lg:text-center mb-12">
+            <h2 className="text-base font-semibold leading-7 text-emerald-600 uppercase tracking-wide">Interactive Helper</h2>
+            <p className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl">
+              Command Builder
+            </p>
+            <p className="mt-4 text-lg text-zinc-600">
+              Select your desired environment options to generate the exact, optimized installation command.
+            </p>
+          </div>
+
+          <div className="mx-auto max-w-4xl bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden">
+            <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-zinc-200 bg-zinc-50/50 p-6 md:p-8 gap-y-6 md:gap-y-0">
+              
+              {/* Column 1: Java Version */}
+              <div className="md:pr-6">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">
+                  1. Java Version
+                </label>
+                <div className="grid grid-cols-5 gap-2">
+                  {['8', '11', '17', '21', '22'].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSelectedVersion(v)}
+                      className={`py-2 px-3 text-sm font-semibold rounded-lg border transition-all text-center ${
+                        selectedVersion === v
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm'
+                          : 'bg-white border-zinc-200 text-zinc-700 hover:border-zinc-300'
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Column 2: Provider */}
+              <div className="md:px-6">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">
+                  2. Distribution Provider
+                </label>
+                <div className="space-y-2">
+                  {[
+                    { id: 'temurin', name: 'Eclipse Temurin', desc: 'Adoptium foundation (Recommended)' },
+                    { id: 'corretto', name: 'Amazon Corretto', desc: 'Production-ready OpenJDK' },
+                    { id: 'zulu', name: 'Azul Zulu', desc: 'Highly optimized & verified builds' },
+                    { id: 'microsoft', name: 'Microsoft OpenJDK', desc: 'Built for Azure & Windows' },
+                    { id: 'openjdk', name: 'Official OpenJDK', desc: 'Oracle reference implementation' },
+                  ].map((p) => {
+                    const isDisabled = p.id === 'microsoft' && selectedVersion === '8';
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() => {
+                          if (!isDisabled) setSelectedProvider(p.id);
+                        }}
+                        className={`w-full text-left p-2.5 rounded-xl border transition-all flex flex-col ${
+                          isDisabled
+                            ? 'opacity-40 cursor-not-allowed bg-zinc-50 border-zinc-100'
+                            : selectedProvider === p.id
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-sm'
+                            : 'bg-white border-zinc-200 text-zinc-700 hover:border-zinc-300'
+                        }`}
+                      >
+                        <span className="text-sm font-semibold">{p.name}</span>
+                        <span className="text-xs text-zinc-500 mt-0.5">{p.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Column 3: Platform Architecture */}
+              <div className="md:pl-6">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">
+                  3. Platform Architecture
+                </label>
+                <div className="space-y-2">
+                  {[
+                    { id: 'auto', name: 'Auto-Detect', desc: 'Detects host architecture automatically (Default)', icon: Cpu },
+                    { id: 'x64', name: 'x64 Architecture', desc: '64-bit Intel / AMD architecture', icon: Cpu },
+                    { id: 'arm64', name: 'arm64 Architecture', desc: '64-bit ARM architecture (Windows on ARM)', icon: Cpu },
+                  ].map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => setSelectedArch(a.id)}
+                      className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-start gap-3 ${
+                        selectedArch === a.id
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 shadow-sm'
+                          : 'bg-white border-zinc-200 text-zinc-700 hover:border-zinc-300'
+                      }`}
+                    >
+                      <a.icon className={`h-4 w-4 mt-0.5 ${selectedArch === a.id ? 'text-emerald-600' : 'text-zinc-400'}`} />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold">{a.name}</span>
+                        <span className="text-xs text-zinc-500 mt-0.5">{a.desc}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Generated Command Bar */}
+            <div className="bg-zinc-900 px-6 py-6 border-t border-zinc-800 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="w-full md:w-auto">
+                <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest block mb-1">Generated CLI Command</span>
+                <div className="flex items-center gap-3">
+                  <code className="text-emerald-400 font-mono text-base md:text-lg select-all bg-zinc-950 px-3 py-1.5 rounded border border-zinc-800 break-all">
+                    {getGeneratedCommand()}
+                  </code>
+                  <button
+                    onClick={handleCopyCommand}
+                    className="p-2 text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 rounded-lg transition-all"
+                    title="Copy command"
+                  >
+                    {commandCopied ? <Check className="h-5 w-5 text-emerald-400" /> : <Copy className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+              
+              <div className="text-xs text-zinc-400 max-w-md md:text-right border-t md:border-t-0 border-zinc-800 pt-4 md:pt-0 w-full md:w-auto">
+                <span className="font-semibold text-zinc-200 block mb-1">How it runs:</span>
+                This will download and install <strong className="text-zinc-100">{getProviderLabel(selectedProvider)} {selectedVersion}</strong> for <strong className="text-zinc-100">{selectedArch === 'auto' ? 'your system architecture' : selectedArch}</strong>, verify its SHA-256 integrity, extract it to <code className="bg-zinc-950 px-1 py-0.5 rounded text-[11px] text-zinc-300">~/.jdk</code>, and set system variables automatically.
+              </div>
+            </div>
           </div>
         </div>
       </section>

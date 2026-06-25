@@ -19,7 +19,6 @@ export const POWERSHELL_SCRIPT = `<#
 
 param (
     [Parameter(Position=0)]
-    [ValidateSet('list', 'install', 'use', 'remove', 'link', 'update', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position=1)]
@@ -29,8 +28,10 @@ param (
     [string]$ProviderOrPath,
 
     [Parameter(Position=3)]
-    [ValidateSet('System', 'User')]
-    [string]$EnvScope = 'System'
+    [string]$Param3,
+
+    [Parameter(Position=4)]
+    [string]$Param4
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +40,60 @@ $JdkDir = Join-Path $env:USERPROFILE ".jdk"
 # Ensure JDK directory exists
 if (-not (Test-Path $JdkDir)) {
     New-Item -ItemType Directory -Path $JdkDir | Out-Null
+}
+
+# Auto-detect native platform architecture of the host
+$DetectedArch = 'x64'
+if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') {
+    $DetectedArch = 'arm64'
+} else {
+    try {
+        $ProcArch = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Architecture -First 1
+        if ($ProcArch -eq 12) {
+            $DetectedArch = 'arm64'
+        }
+    } catch {}
+}
+
+# Parse parameters based on command type for 100% legacy compatibility
+$Architecture = $null
+$EnvScope = 'System'
+
+if ($Command -eq 'use') {
+    # Legacy: jdk use <version> [provider] [scope]
+    if ($Param3) {
+        if ($Param3 -eq 'System' -or $Param3 -eq 'User') {
+            $EnvScope = $Param3
+        } else {
+            Write-Color "Error: Scope must be 'System' or 'User'" Red
+            exit 1
+        }
+    }
+} elseif ($Command -eq 'install' -or $Command -eq 'update') {
+    # Usage: jdk install <version> [provider] [architecture]
+    if ($Param3) {
+        if ($Param3.ToLower() -eq 'x64' -or $Param3.ToLower() -eq 'arm64') {
+            $Architecture = $Param3.ToLower()
+        } else {
+            Write-Color "Error: Architecture must be 'x64' or 'arm64'" Red
+            exit 1
+        }
+    }
+}
+
+# Distinguish if the second parameter is architecture or provider name
+$Provider = 'temurin'
+if ($ProviderOrPath) {
+    if ($ProviderOrPath.ToLower() -eq 'x64' -or $ProviderOrPath.ToLower() -eq 'arm64') {
+        $Architecture = $ProviderOrPath.ToLower()
+    } else {
+        $Provider = $ProviderOrPath.ToLower()
+    }
+}
+
+# Fallback to detected native platform if not specified
+if (-not $Architecture) {
+    $Architecture = $DetectedArch
 }
 
 function Write-Color {
@@ -108,8 +163,9 @@ function Verify-Checksum {
 }
 
 function Install-Temurin {
-    param([string]$Ver)
-    $ApiUrl = "https://api.adoptium.net/v3/assets/feature_releases/$Ver/ga?architecture=x64&heap_size=normal&image_type=jdk&jvm_impl=hotspot&os=windows"
+    param([string]$Ver, [string]$Arch)
+    $ApiArch = if ($Arch -eq 'arm64') { 'aarch64' } else { 'x64' }
+    $ApiUrl = "https://api.adoptium.net/v3/assets/feature_releases/$Ver/ga?architecture=$ApiArch&heap_size=normal&image_type=jdk&jvm_impl=hotspot&os=windows"
     
     try {
         $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
@@ -120,9 +176,9 @@ function Install-Temurin {
             $ExpectedChecksum = $Asset.package.checksum
             $FileName = $Asset.package.name
             $ZipPath = Join-Path $JdkDir $FileName
-            $ExtractDir = Join-Path $JdkDir "temurin-$Ver"
+            $ExtractDir = Join-Path $JdkDir "temurin-$Ver-$Arch"
             
-            Write-Color "Downloading Temurin $Ver from $DownloadUrl..." Cyan
+            Write-Color "Downloading Temurin $Ver ($Arch) from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
             
             if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
@@ -135,32 +191,34 @@ function Install-Temurin {
             Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
             Remove-Item $ZipPath
             
-            Write-Color "Installed Temurin $Ver to $ExtractDir" Green
+            Write-Color "Installed Temurin $Ver ($Arch) to $ExtractDir" Green
         } else {
-            Write-Color "Could not find a ZIP package for Temurin $Ver" Red
+            Write-Color "Could not find a ZIP package for Temurin $Ver ($Arch)" Red
         }
     } catch {
-        Write-Color "Failed to fetch Temurin $Ver. Ensure the version exists." Red
+        Write-Color "Failed to fetch Temurin $Ver ($Arch). Ensure the version and architecture exist." Red
     }
 }
 
 function Install-Corretto {
-    param([string]$Ver)
+    param([string]$Ver, [string]$Arch)
+    $ApiArch = if ($Arch -eq 'arm64') { 'aarch64' } else { 'x64' }
+    
     # Amazon Corretto URL pattern
-    $DownloadUrl = "https://corretto.aws/downloads/latest/amazon-corretto-$Ver-x64-windows-jdk.zip"
-    $ChecksumUrl = "https://corretto.aws/downloads/latest_checksum/amazon-corretto-$Ver-x64-windows-jdk.zip"
-    $ZipPath = Join-Path $JdkDir "corretto-$Ver.zip"
-    $ExtractDir = Join-Path $JdkDir "corretto-$Ver"
+    $DownloadUrl = "https://corretto.aws/downloads/latest/amazon-corretto-$Ver-$ApiArch-windows-jdk.zip"
+    $ChecksumUrl = "https://corretto.aws/downloads/latest_checksum/amazon-corretto-$Ver-$ApiArch-windows-jdk.zip"
+    $ZipPath = Join-Path $JdkDir "corretto-$Ver-$Arch.zip"
+    $ExtractDir = Join-Path $JdkDir "corretto-$Ver-$Arch"
     
     try {
         $ExpectedChecksum = ""
         try {
             $ExpectedChecksum = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop).Trim()
         } catch {
-            Write-Color "Warning: Could not fetch checksum for Corretto $Ver." Yellow
+            Write-Color "Warning: Could not fetch checksum for Corretto $Ver ($Arch)." Yellow
         }
 
-        Write-Color "Downloading Corretto $Ver from $DownloadUrl..." Cyan
+        Write-Color "Downloading Corretto $Ver ($Arch) from $DownloadUrl..." Cyan
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
         
         if ($ExpectedChecksum) {
@@ -176,27 +234,29 @@ function Install-Corretto {
         Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
         Remove-Item $ZipPath
         
-        Write-Color "Installed Corretto $Ver to $ExtractDir" Green
+        Write-Color "Installed Corretto $Ver ($Arch) to $ExtractDir" Green
     } catch {
-        Write-Color "Failed to fetch Corretto $Ver. Ensure the version exists." Red
+        Write-Color "Failed to fetch Corretto $Ver ($Arch). Ensure the version and architecture exist." Red
         if (Test-Path $ZipPath) { Remove-Item $ZipPath }
     }
 }
 
 function Install-Zulu {
-    param([string]$Ver)
+    param([string]$Ver, [string]$Arch)
+    $ApiArch = if ($Arch -eq 'arm64') { 'arm' } else { 'x86' }
+    
     # Azul Zulu API
-    $ApiUrl = "https://api.azul.com/metadata/v1/zulu/packages/?java_version=$Ver&os=windows&arch=x86&hw_bitness=64&ext=zip&archive_type=zip&java_package_type=jdk&latest=true"
+    $ApiUrl = "https://api.azul.com/metadata/v1/zulu/packages/?java_version=$Ver&os=windows&arch=$ApiArch&hw_bitness=64&ext=zip&archive_type=zip&java_package_type=jdk&latest=true"
     
     try {
         $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
         if ($Response.Count -gt 0) {
             $DownloadUrl = $Response[0].download_url
             $ExpectedChecksum = $Response[0].sha256_hash
-            $ZipPath = Join-Path $JdkDir "zulu-$Ver.zip"
-            $ExtractDir = Join-Path $JdkDir "zulu-$Ver"
+            $ZipPath = Join-Path $JdkDir "zulu-$Ver-$Arch.zip"
+            $ExtractDir = Join-Path $JdkDir "zulu-$Ver-$Arch"
             
-            Write-Color "Downloading Zulu $Ver from $DownloadUrl..." Cyan
+            Write-Color "Downloading Zulu $Ver ($Arch) from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
             
             if (-not (Verify-Checksum -FilePath $ZipPath -ExpectedHash $ExpectedChecksum -Algorithm "SHA256")) {
@@ -209,22 +269,24 @@ function Install-Zulu {
             Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
             Remove-Item $ZipPath
             
-            Write-Color "Installed Zulu $Ver to $ExtractDir" Green
+            Write-Color "Installed Zulu $Ver ($Arch) to $ExtractDir" Green
         } else {
-            Write-Color "Could not find a ZIP package for Zulu $Ver" Red
+            Write-Color "Could not find a ZIP package for Zulu $Ver ($Arch)" Red
         }
     } catch {
-        Write-Color "Failed to fetch Zulu $Ver. Ensure the version exists." Red
+        Write-Color "Failed to fetch Zulu $Ver ($Arch). Ensure the version and architecture exist." Red
     }
 }
 
 function Install-Microsoft {
-    param([string]$Ver)
+    param([string]$Ver, [string]$Arch)
+    $ApiArch = if ($Arch -eq 'arm64') { 'aarch64' } else { 'x64' }
+    
     # Microsoft Build of OpenJDK
-    $ApiUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-x64.zip"
-    $ChecksumUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-x64.zip.sha256sum.txt"
-    $ZipPath = Join-Path $JdkDir "microsoft-$Ver.zip"
-    $ExtractDir = Join-Path $JdkDir "microsoft-$Ver"
+    $ApiUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-$ApiArch.zip"
+    $ChecksumUrl = "https://aka.ms/download-jdk/microsoft-jdk-$Ver-windows-$ApiArch.zip.sha256sum.txt"
+    $ZipPath = Join-Path $JdkDir "microsoft-$Ver-$Arch.zip"
+    $ExtractDir = Join-Path $JdkDir "microsoft-$Ver-$Arch"
     
     try {
         $ExpectedChecksum = ""
@@ -232,10 +294,10 @@ function Install-Microsoft {
             $ChecksumText = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop)
             $ExpectedChecksum = $ChecksumText.Split(' ')[0].Trim()
         } catch {
-            Write-Color "Warning: Could not fetch checksum for Microsoft JDK $Ver." Yellow
+            Write-Color "Warning: Could not fetch checksum for Microsoft JDK $Ver ($Arch)." Yellow
         }
 
-        Write-Color "Downloading Microsoft JDK $Ver from $ApiUrl..." Cyan
+        Write-Color "Downloading Microsoft JDK $Ver ($Arch) from $ApiUrl..." Cyan
         Invoke-WebRequest -Uri $ApiUrl -OutFile $ZipPath
         
         if ($ExpectedChecksum) {
@@ -250,25 +312,27 @@ function Install-Microsoft {
         Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
         Remove-Item $ZipPath
         
-        Write-Color "Installed Microsoft JDK $Ver to $ExtractDir" Green
+        Write-Color "Installed Microsoft JDK $Ver ($Arch) to $ExtractDir" Green
     } catch {
-        Write-Color "Failed to fetch Microsoft JDK $Ver. Ensure the version exists." Red
+        Write-Color "Failed to fetch Microsoft JDK $Ver ($Arch). Ensure the version and architecture exist." Red
         if (Test-Path $ZipPath) { Remove-Item $ZipPath }
     }
 }
 
 function Install-OpenJDK {
-    param([string]$Ver)
+    param([string]$Ver, [string]$Arch)
+    $ApiArch = if ($Arch -eq 'arm64') { 'aarch64' } else { 'x64' }
+    
     # Official OpenJDK via Foojay Disco API
-    $ApiUrl = "https://api.foojay.io/disco/v3.0/packages/jdks?version=$Ver&operating_system=windows&architecture=x64&archive_type=zip&distribution=oracle_open_jdk&latest=per_update"
+    $ApiUrl = "https://api.foojay.io/disco/v3.0/packages/jdks?version=$Ver&operating_system=windows&architecture=$ApiArch&archive_type=zip&distribution=oracle_open_jdk&latest=per_update"
     
     try {
         $Response = Invoke-RestMethod -Uri $ApiUrl -ErrorAction Stop
         if ($Response.result.Count -gt 0) {
             $DownloadUrl = $Response.result[0].links.pkg_download_redirect
             $InfoUrl = $Response.result[0].links.pkg_info_uri
-            $ZipPath = Join-Path $JdkDir "openjdk-$Ver.zip"
-            $ExtractDir = Join-Path $JdkDir "openjdk-$Ver"
+            $ZipPath = Join-Path $JdkDir "openjdk-$Ver-$Arch.zip"
+            $ExtractDir = Join-Path $JdkDir "openjdk-$Ver-$Arch"
             
             $ExpectedChecksum = ""
             try {
@@ -278,10 +342,10 @@ function Install-OpenJDK {
                     $ExpectedChecksum = (Invoke-RestMethod -Uri $ChecksumUrl -ErrorAction Stop).Trim()
                 }
             } catch {
-                Write-Color "Warning: Could not fetch checksum for OpenJDK $Ver." Yellow
+                Write-Color "Warning: Could not fetch checksum for OpenJDK $Ver ($Arch)." Yellow
             }
 
-            Write-Color "Downloading OpenJDK $Ver from $DownloadUrl..." Cyan
+            Write-Color "Downloading OpenJDK $Ver ($Arch) from $DownloadUrl..." Cyan
             Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
             
             if ($ExpectedChecksum) {
@@ -296,12 +360,12 @@ function Install-OpenJDK {
             Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
             Remove-Item $ZipPath
             
-            Write-Color "Installed OpenJDK $Ver to $ExtractDir" Green
+            Write-Color "Installed OpenJDK $Ver ($Arch) to $ExtractDir" Green
         } else {
-            Write-Color "Could not find a ZIP package for OpenJDK $Ver" Red
+            Write-Color "Could not find a ZIP package for OpenJDK $Ver ($Arch)" Red
         }
     } catch {
-        Write-Color "Failed to fetch OpenJDK $Ver. Ensure the version exists." Red
+        Write-Color "Failed to fetch OpenJDK $Ver ($Arch). Ensure the version exists." Red
     }
 }
 
@@ -329,13 +393,12 @@ switch ($Command) {
             exit 1
         }
         
-        $Provider = if ($ProviderOrPath) { $ProviderOrPath.ToLower() } else { 'temurin' }
         switch ($Provider) {
-            'temurin' { Install-Temurin $Version }
-            'corretto' { Install-Corretto $Version }
-            'zulu' { Install-Zulu $Version }
-            'microsoft' { Install-Microsoft $Version }
-            'openjdk' { Install-OpenJDK $Version }
+            'temurin' { Install-Temurin $Version $Architecture }
+            'corretto' { Install-Corretto $Version $Architecture }
+            'zulu' { Install-Zulu $Version $Architecture }
+            'microsoft' { Install-Microsoft $Version $Architecture }
+            'openjdk' { Install-OpenJDK $Version $Architecture }
             default { Write-Color "Unknown provider: $Provider. Supported: temurin, corretto, zulu, microsoft, openjdk" Red }
         }
     }
@@ -348,12 +411,25 @@ switch ($Command) {
         
         $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
         if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { $_.Name -match "^$ProviderOrPath-" })
+            $Targets = @($Targets | Where-Object { 
+                $_.Name -match "^$ProviderOrPath\b" -or 
+                $_.Name -match "\b$ProviderOrPath$" -or
+                $_.Name -eq $ProviderOrPath
+            })
         }
         
         if ($Targets.Count -gt 1) {
-            Write-Color "Multiple JDKs found for version $Version. Please specify a provider:" Yellow
-            $Targets | ForEach-Object { Write-Host "  jdk use $Version $($_.Name.Split('-')[0])" }
+            Write-Color "Multiple JDKs found for version $Version. Please specify a provider or architecture:" Yellow
+            $Targets | ForEach-Object { 
+                $Parts = $_.Name.Split('-')
+                $Prov = $Parts[0]
+                $Arch = if ($Parts.Count -gt 2) { $Parts[2] } else { "" }
+                if ($Arch) {
+                    Write-Host "  jdk use $Version $Prov-$Arch"
+                } else {
+                    Write-Host "  jdk use $Version $Prov"
+                }
+            }
             exit 1
         } elseif ($Targets.Count -eq 1) {
             $Target = $Targets[0]
@@ -365,7 +441,7 @@ switch ($Command) {
                 Write-Color "Could not find bin\\javac.exe in $($Target.FullName). Is it a valid JDK?" Red
             }
         } else {
-            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider '$ProviderOrPath' "})not found. Use 'jdk list' to see installed versions." Red
+            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider/arch '$ProviderOrPath' "})not found. Use 'jdk list' to see installed versions." Red
         }
     }
     
@@ -377,12 +453,25 @@ switch ($Command) {
         
         $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
         if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { $_.Name -match "^$ProviderOrPath-" })
+            $Targets = @($Targets | Where-Object { 
+                $_.Name -match "^$ProviderOrPath\b" -or 
+                $_.Name -match "\b$ProviderOrPath$" -or
+                $_.Name -eq $ProviderOrPath
+            })
         }
         
         if ($Targets.Count -gt 1) {
-            Write-Color "Multiple JDKs found for version $Version. Please specify a provider:" Yellow
-            $Targets | ForEach-Object { Write-Host "  jdk remove $Version $($_.Name.Split('-')[0])" }
+            Write-Color "Multiple JDKs found for version $Version. Please specify a provider or architecture:" Yellow
+            $Targets | ForEach-Object { 
+                $Parts = $_.Name.Split('-')
+                $Prov = $Parts[0]
+                $Arch = if ($Parts.Count -gt 2) { $Parts[2] } else { "" }
+                if ($Arch) {
+                    Write-Host "  jdk remove $Version $Prov-$Arch"
+                } else {
+                    Write-Host "  jdk remove $Version $Prov"
+                }
+            }
             exit 1
         } elseif ($Targets.Count -eq 1) {
             $Target = $Targets[0]
@@ -394,10 +483,10 @@ switch ($Command) {
                 Write-Host "Aborted."
             }
         } else {
-            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider '$ProviderOrPath' "})not found." Red
+            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider/arch '$ProviderOrPath' "})not found." Red
         }
     }
-
+    
     'link' {
         if (-not $Version -or -not $ProviderOrPath) {
             Write-Color "Error: Version and Path are required for link." Red
@@ -418,7 +507,7 @@ switch ($Command) {
         New-Item -ItemType Junction -Path $LinkPath -Target $ProviderOrPath | Out-Null
         Write-Color "Linked version $Version to $ProviderOrPath" Green
     }
-
+    
     'update' {
         if (-not $Version) {
             Write-Color "Error: Version is required for update." Red
@@ -427,35 +516,51 @@ switch ($Command) {
         
         $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
         if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { $_.Name -match "^$ProviderOrPath-" })
+            $Targets = @($Targets | Where-Object { 
+                $_.Name -match "^$ProviderOrPath\b" -or 
+                $_.Name -match "\b$ProviderOrPath$" -or
+                $_.Name -eq $ProviderOrPath
+            })
         }
         
         if ($Targets.Count -eq 0) {
-            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider '$ProviderOrPath' "})not found. Cannot update." Red
+            Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider/arch '$ProviderOrPath' "})not found. Cannot update." Red
             exit 1
         }
         
         if ($Targets.Count -gt 1) {
-            Write-Color "Multiple JDKs found for version $Version. Please specify a provider:" Yellow
-            $Targets | ForEach-Object { Write-Host "  jdk update $Version $($_.Name.Split('-')[0])" }
+            Write-Color "Multiple JDKs found for version $Version. Please specify a provider or architecture:" Yellow
+            $Targets | ForEach-Object { 
+                $Parts = $_.Name.Split('-')
+                $Prov = $Parts[0]
+                $Arch = if ($Parts.Count -gt 2) { $Parts[2] } else { "" }
+                if ($Arch) {
+                    Write-Host "  jdk update $Version $Prov-$Arch"
+                } else {
+                    Write-Host "  jdk update $Version $Prov"
+                }
+            }
             exit 1
         } elseif ($Targets.Count -eq 1) {
             $Target = $Targets[0]
-            $Provider = $Target.Name.Split('-')[0]
+            $Parts = $Target.Name.Split('-')
+            $Provider = $Parts[0]
+            $Arch = if ($Parts.Count -gt 2) { $Parts[2] } else { $Architecture }
+            
             if ($Provider -eq 'linked') {
                 Write-Color "Cannot update a linked JDK." Red
                 exit 1
             }
             
-            Write-Color "Found existing $Provider $Version. Reinstalling to fetch the latest patch..." Cyan
+            Write-Color "Found existing $Provider $Version ($Arch). Reinstalling to fetch the latest patch..." Cyan
             Remove-Item -Path $Target.FullName -Recurse -Force
             
             switch ($Provider) {
-                'temurin' { Install-Temurin $Version }
-                'corretto' { Install-Corretto $Version }
-                'zulu' { Install-Zulu $Version }
-                'microsoft' { Install-Microsoft $Version }
-                'openjdk' { Install-OpenJDK $Version }
+                'temurin' { Install-Temurin $Version $Arch }
+                'corretto' { Install-Corretto $Version $Arch }
+                'zulu' { Install-Zulu $Version $Arch }
+                'microsoft' { Install-Microsoft $Version $Arch }
+                'openjdk' { Install-OpenJDK $Version $Arch }
             }
         }
     }
@@ -464,18 +569,20 @@ switch ($Command) {
         Write-Host "WinJDK Manager - Usage" -ForegroundColor Cyan
         Write-Host "----------------------"
         Write-Host "jdk list                                 - List installed JDKs"
-        Write-Host "jdk install <version> [provider]         - Install a JDK (Providers: temurin, corretto, zulu, microsoft, openjdk)"
+        Write-Host "jdk install <version> [provider] [arch]  - Install a JDK (Providers: temurin, corretto, zulu, microsoft, openjdk)"
+        Write-Host "                                           (Arch: x64, arm64; default: detected platform)"
         Write-Host "jdk use <version> [provider] [scope]     - Set JAVA_HOME and PATH (Scope: System or User, default: System)"
         Write-Host "jdk link <version> <path>                - Link an existing JDK directory"
         Write-Host "jdk update <version> [provider]          - Reinstall a JDK to get the latest patch"
         Write-Host "jdk remove <version> [provider]          - Delete an installed JDK"
         Write-Host ""
         Write-Host "Examples:"
-        Write-Host "  jdk install 21 temurin"
-        Write-Host "  jdk install 17 openjdk"
+        Write-Host "  jdk install 21 temurin arm64"
+        Write-Host "  jdk install 17 openjdk x64"
+        Write-Host "  jdk install 21 arm64"
         Write-Host "  jdk link 8 C:\\Program Files\\Java\\jdk1.8.0_202"
         Write-Host "  jdk use 21"
-        Write-Host "  jdk use 21 corretto"
+        Write-Host "  jdk use 21 corretto-arm64"
         Write-Host "  jdk use 21 temurin User"
         Write-Host "  jdk update 21 temurin"
         Write-Host "  jdk remove 17 openjdk"
