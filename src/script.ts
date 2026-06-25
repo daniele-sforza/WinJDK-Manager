@@ -107,6 +107,59 @@ function Get-InstalledJDKs {
     }
 }
 
+function Test-JdkMatch {
+    param(
+        [string]$Name,
+        [string]$Version,
+        [string]$ProviderOrPath
+    )
+
+    $Parts = $Name.Split('-')
+    if ($Parts.Count -lt 2) { return $false }
+    
+    $ItemProvider = $Parts[0]
+    $ItemVersion = $Parts[1]
+    $ItemArch = if ($Parts.Count -gt 2) { $Parts[2] } else { $null }
+
+    if ($ItemVersion -ne $Version) {
+        return $false
+    }
+
+    if (-not $ProviderOrPath) {
+        return $true
+    }
+
+    $ProviderOrPathLower = $ProviderOrPath.ToLower()
+
+    if ($Name.ToLower() -eq $ProviderOrPathLower) {
+        return $true
+    }
+
+    if ($ProviderOrPathLower.Contains('-')) {
+        $SearchParts = $ProviderOrPathLower.Split('-')
+        $SearchProv = $SearchParts[0]
+        $SearchArch = $SearchParts[1]
+
+        if ($ItemProvider -eq $SearchProv -and $ItemArch -eq $SearchArch) {
+            return $true
+        }
+    }
+
+    if ($ItemProvider -eq $ProviderOrPathLower) {
+        return $true
+    }
+
+    if ($ItemArch -and ($ItemArch -eq $ProviderOrPathLower)) {
+        return $true
+    }
+
+    if ($Name -match [regex]::Escape($ProviderOrPathLower)) {
+        return $true
+    }
+
+    return $false
+}
+
 function Set-JavaHome {
     param([string]$Path, [string]$Scope)
     
@@ -375,7 +428,15 @@ switch ($Command) {
         $Installed = Get-InstalledJDKs
         if ($Installed) {
             foreach ($jdk in $Installed) {
-                $IsActive = ($env:JAVA_HOME -ne $null) -and ($env:JAVA_HOME.StartsWith($jdk.FullName))
+                $ActiveJavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "User")
+                if (-not $ActiveJavaHome) {
+                    $ActiveJavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "Machine")
+                }
+                if (-not $ActiveJavaHome) {
+                    $ActiveJavaHome = $env:JAVA_HOME
+                }
+                
+                $IsActive = ($ActiveJavaHome -ne $null) -and ($ActiveJavaHome.StartsWith($jdk.FullName))
                 if ($IsActive) {
                     Write-Color "  * $($jdk.Name) (Active)" Green
                 } else {
@@ -409,14 +470,7 @@ switch ($Command) {
             exit 1
         }
         
-        $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
-        if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { 
-                $_.Name -match "^$ProviderOrPath\b" -or 
-                $_.Name -match "\b$ProviderOrPath$" -or
-                $_.Name -eq $ProviderOrPath
-            })
-        }
+        $Targets = @(Get-InstalledJDKs | Where-Object { Test-JdkMatch -Name $_.Name -Version $Version -ProviderOrPath $ProviderOrPath })
         
         if ($Targets.Count -gt 1) {
             Write-Color "Multiple JDKs found for version $Version. Please specify a provider or architecture:" Yellow
@@ -451,14 +505,7 @@ switch ($Command) {
             exit 1
         }
         
-        $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
-        if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { 
-                $_.Name -match "^$ProviderOrPath\b" -or 
-                $_.Name -match "\b$ProviderOrPath$" -or
-                $_.Name -eq $ProviderOrPath
-            })
-        }
+        $Targets = @(Get-InstalledJDKs | Where-Object { Test-JdkMatch -Name $_.Name -Version $Version -ProviderOrPath $ProviderOrPath })
         
         if ($Targets.Count -gt 1) {
             Write-Color "Multiple JDKs found for version $Version. Please specify a provider or architecture:" Yellow
@@ -514,14 +561,7 @@ switch ($Command) {
             exit 1
         }
         
-        $Targets = @(Get-InstalledJDKs | Where-Object { $_.Name -match "-$Version$" -or $_.Name -match "-$Version\b" })
-        if ($ProviderOrPath) {
-            $Targets = @($Targets | Where-Object { 
-                $_.Name -match "^$ProviderOrPath\b" -or 
-                $_.Name -match "\b$ProviderOrPath$" -or
-                $_.Name -eq $ProviderOrPath
-            })
-        }
+        $Targets = @(Get-InstalledJDKs | Where-Object { Test-JdkMatch -Name $_.Name -Version $Version -ProviderOrPath $ProviderOrPath })
         
         if ($Targets.Count -eq 0) {
             Write-Color "JDK matching '$Version' $(if($ProviderOrPath){"and provider/arch '$ProviderOrPath' "})not found. Cannot update." Red
