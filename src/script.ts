@@ -592,6 +592,15 @@ switch ($Command) {
                 exit 1
             }
             
+            # Check if this JDK is currently active in User, Machine scope, or current session
+            $UserJavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "User")
+            $MachineJavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "Machine")
+            $SessionJavaHome = $env:JAVA_HOME
+
+            $WasActiveUser = ($UserJavaHome -ne $null) -and ($UserJavaHome.StartsWith($Target.FullName))
+            $WasActiveMachine = ($MachineJavaHome -ne $null) -and ($MachineJavaHome.StartsWith($Target.FullName))
+            $WasActiveSession = ($SessionJavaHome -ne $null) -and ($SessionJavaHome.StartsWith($Target.FullName))
+
             Write-Color "Found existing $Provider $Version ($Arch). Reinstalling to fetch the latest patch..." Cyan
             Remove-Item -Path $Target.FullName -Recurse -Force
             
@@ -601,6 +610,30 @@ switch ($Command) {
                 'zulu' { Install-Zulu $Version $Arch }
                 'microsoft' { Install-Microsoft $Version $Arch }
                 'openjdk' { Install-OpenJDK $Version $Arch }
+            }
+
+            # Update environment variables if this JDK was active
+            if ($WasActiveUser -or $WasActiveMachine -or $WasActiveSession) {
+                $NewExtractDir = Join-Path $JdkDir "$Provider-$Version-$Arch"
+                if (-not (Test-Path $NewExtractDir)) {
+                    $NewExtractDir = Join-Path $JdkDir "$Provider-$Version"
+                }
+                
+                $Javac = Get-ChildItem -Path $NewExtractDir -Recurse -Filter "javac.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($Javac) {
+                    $NewPath = $Javac.Directory.Parent.FullName
+                    if ($WasActiveUser) {
+                        Set-JavaHome -Path $NewPath -Scope 'User'
+                    }
+                    if ($WasActiveMachine) {
+                        Set-JavaHome -Path $NewPath -Scope 'System'
+                    }
+                    if (-not $WasActiveUser -and -not $WasActiveMachine -and $WasActiveSession) {
+                        Set-JavaHome -Path $NewPath -Scope 'System'
+                    }
+                } else {
+                    Write-Color "Warning: Updated JDK installed, but could not find bin\\javac.exe to refresh environment variables." Yellow
+                }
             }
         }
     }
